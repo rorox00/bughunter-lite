@@ -38,9 +38,18 @@ def strip_boilerplate(body, max_len=4000):
     data: URIs, inline SVG/style blocks and long base64 runs become markers.
     If the result still exceeds max_len, keep the first and last halves with a
     "…[N chars elided]…" marker between them. Empty input returns "".
+
+    Large inputs are pre-sliced to a bounded buffer before any regex runs, so a
+    multi-megabyte body neither allocates giant intermediate strings nor risks
+    catastrophic regex backtracking (ReDoS). The final output is identical for
+    inputs within the buffer; only the discarded middle of huge inputs differs.
     """
     if not body:
         return ""
+    # Pre-slice: regexes never need more than a local buffer around the edges.
+    buffer_limit = max_len * 4
+    if len(body) > buffer_limit:
+        body = body[:max_len * 2] + " " + body[-max_len * 2:]
     s = RE_DATA_URI.sub(_OMIT, body)
     s = RE_SVG.sub(_OMIT, s)
     s = RE_STYLE.sub(_OMIT, s)

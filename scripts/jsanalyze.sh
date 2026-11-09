@@ -86,12 +86,14 @@ else
 fi
 
 # DANGEROUS FUNCTIONS / GADGETS (DOM-XSS, redirect, postMessage, prototype pollution, RCE sinks)
-grep -rnE 'eval\(|new Function\(|innerHTML|outerHTML|document\.write|dangerouslySetInnerHTML|insertAdjacentHTML|\.html\(|setTimeout\(["'"'"'\x60]|postMessage|addEventListener\(["'"'"'\x60]message|localStorage|sessionStorage|location\s*=|\.src\s*=|child_process|exec\(' "$JSDIR/js" > "$OUT/sinks.txt" || true
+# Minified bundles are often one line; cut -c 1-300 keeps the match without
+# dumping megabytes of surrounding bundle code into the output files.
+grep -rnE 'eval\(|new Function\(|innerHTML|outerHTML|document\.write|dangerouslySetInnerHTML|insertAdjacentHTML|\.html\(|setTimeout\(["'"'"'\x60]|postMessage|addEventListener\(["'"'"'\x60]message|localStorage|sessionStorage|location\s*=|\.src\s*=|child_process|exec\(' "$JSDIR/js" 2>/dev/null | cut -c 1-300 > "$OUT/sinks.txt" || true
 
 # ROUTES / FEATURE FLAGS / INTERESTING COMMENTS
-grep -rinE '/(admin|internal|debug|actuator|console|manage)[A-Za-z0-9_/.-]*' "$JSDIR/js" 2>/dev/null | sort -u > "$OUT/routes.txt" || true
-grep -rinE '(feature|flag|toggle|isEnabled|experiment)[A-Za-z0-9_]*' "$JSDIR/js" 2>/dev/null | sort -u > "$OUT/flags.txt" || true
-grep -rnE '(//|/\*).*(TODO|FIXME|HACK|password|secret|internal|deprecated|apikey|token)' "$JSDIR/js" > "$OUT/comments.txt" 2>/dev/null || true
+grep -rinE '/(admin|internal|debug|actuator|console|manage)[A-Za-z0-9_/.-]*' "$JSDIR/js" 2>/dev/null | cut -c 1-300 | sort -u > "$OUT/routes.txt" || true
+grep -rinE '(feature|flag|toggle|isEnabled|experiment)[A-Za-z0-9_]*' "$JSDIR/js" 2>/dev/null | cut -c 1-300 | sort -u > "$OUT/flags.txt" || true
+grep -rnE '(//|/\*).*(TODO|FIXME|HACK|password|secret|internal|deprecated|apikey|token)' "$JSDIR/js" 2>/dev/null | cut -c 1-300 > "$OUT/comments.txt" || true
 
 # TECH / FRAMEWORK
 grep -rinoE 'react|angular|vue|next|nuxt|webpack|graphql|apollo|svelte|jquery' "$JSDIR/js" 2>/dev/null | sort -u > "$OUT/tech.txt" || true

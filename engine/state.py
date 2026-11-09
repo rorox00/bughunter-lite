@@ -3,11 +3,13 @@
 
 An Engagement owns a directory on disk holding its JSON state, a log, an
 evidence folder, and report/arsenal scratch files. State is persisted
-atomically so a run can be stopped and resumed. No network access.
+atomically so a run can be stopped and resumed. A corrupt state file is backed
+up rather than silently overwritten, so findings are never lost. No network.
 """
 
 import json
 import os
+import tempfile
 import time
 
 
@@ -28,13 +30,18 @@ class Engagement:
         self.state = self._load()
 
     def _load(self):
-        """Return persisted state, or a fresh default dict."""
+        """Load state from disk; back up a damaged file instead of losing it."""
         if os.path.exists(self.state_path):
             try:
                 with open(self.state_path, "r", encoding="utf-8") as f:
                     return json.load(f)
-            except (ValueError, OSError):
-                pass
+            except (ValueError, OSError) as e:
+                backup = "%s.corrupt.%d" % (self.state_path, int(time.time()))
+                try:
+                    os.rename(self.state_path, backup)
+                    self.log("WARNING: corrupted state (%s); backed up to %s" % (e, backup))
+                except OSError:
+                    pass
         return {
             "name": self.name,
             "phase": None,
@@ -45,12 +52,13 @@ class Engagement:
         }
 
     def save(self):
-        """Write state atomically via a temp file and os.replace."""
+        """Write state atomically via a unique temp file and os.replace."""
         self.state["updated"] = time.time()
-        tmp = self.state_path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(self.state, f, indent=2)
-        os.replace(tmp, self.state_path)
+        with tempfile.NamedTemporaryFile(
+                "w", dir=self.dir, delete=False, encoding="utf-8") as tf:
+            json.dump(self.state, tf, indent=2)
+            tmp_path = tf.name
+        os.replace(tmp_path, self.state_path)
 
     def set_phase(self, phase):
         """Record the current phase, persist, and log the transition."""
@@ -94,7 +102,7 @@ class Engagement:
 
 
 if __name__ == "__main__":
-    import tempfile
+    import glob
 
     with tempfile.TemporaryDirectory() as tmp:
         eng = Engagement(tmp, "selftest")
@@ -120,5 +128,12 @@ if __name__ == "__main__":
         reloaded = Engagement(tmp, "selftest")
         assert reloaded.state["phase"] == "recon"
         assert reloaded.get_session("userA") == sess
+
+        # Corruption recovery: a damaged state.json is backed up, not lost.
+        with open(reloaded.state_path, "w", encoding="utf-8") as f:
+            f.write("{ this is not valid json ")
+        recovered = Engagement(tmp, "selftest")
+        assert recovered.state["phase"] is None, "should fall back to default state"
+        assert glob.glob(reloaded.state_path + ".corrupt.*"), "corrupt backup must exist"
 
     print("state.py self-test: PASS")

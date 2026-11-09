@@ -4,29 +4,34 @@
 This module is the project's safety boundary. It is pure code with no network
 access. A host is in scope only if it matches the in_scope allowlist AND does
 not match the out_of_scope denylist; anything unmatched is denied.
+
+Host extraction uses urllib.parse.urlsplit so ports, IPv6 literals ([::1]) and
+userinfo tricks (http://in-scope@evil/) resolve to the real connection host.
+IP/CIDR matching is driven by the ipaddress module so IPv4 and IPv6 networks
+are both handled without fragile regexes.
 """
 
 import argparse
 import ipaddress
 import json
-import re
 import urllib.parse
-
-# A bare IPv4 address or CIDR, e.g. "203.0.113.9" or "203.0.113.0/24".
-_IP_OR_CIDR = re.compile(r"^\d{1,3}(\.\d{1,3}){3}(/\d{1,2})?$")
 
 
 def _host_of(s):
     """Return the bare lowercase hostname of a URL or host string.
 
-    Strips any scheme, path and port. Returns "" when nothing usable is found.
+    Strips scheme, path, port and userinfo. Returns "" when nothing usable is
+    found. A scheme-less string is treated as a host by prepending http://.
     """
     s = (s or "").strip()
-    if "://" in s:
-        return (urllib.parse.urlparse(s).hostname or "").lower()
-    host = s.split("/", 1)[0]      # drop any path
-    host = host.split(":", 1)[0]   # drop any port
-    return host.lower()
+    if not s:
+        return ""
+    if "://" not in s:
+        s = "http://" + s
+    try:
+        return (urllib.parse.urlsplit(s).hostname or "").lower()
+    except ValueError:
+        return ""
 
 
 def _clean(items):
@@ -65,16 +70,27 @@ class Scope:
         """Return True if a bare hostname matches a single scope pattern."""
         host = host.lower()
         pattern = pattern.lower()
-        if _IP_OR_CIDR.match(pattern):
+
+        # IP / CIDR: only meaningful when the host itself is an IP address.
+        try:
+            ip = ipaddress.ip_address(host)
             try:
-                return ipaddress.ip_address(host) in ipaddress.ip_network(pattern, strict=False)
+                return ip in ipaddress.ip_network(pattern, strict=False)
             except ValueError:
-                return False
+                return False  # host is an IP, pattern is not a matching network
+        except ValueError:
+            pass
+
+        # Wildcard: "*.acme.com" matches the apex and any subdomain.
         if pattern.startswith("*."):
             apex = pattern[2:]
             return host == apex or host.endswith("." + apex)
+
+        # Bare apex: "acme.com" matches the apex and any subdomain (spec).
         if "." in pattern and "*" not in pattern:
             return host == pattern or host.endswith("." + pattern)
+
+        # Anything else: exact string equality.
         return host == pattern
 
     def _matches_any(self, host, patterns):
@@ -116,6 +132,7 @@ def _selftest():
     assert s.in_scope_host("app.acme.com"), "subdomain of wildcard should be in"
     assert s.in_scope_host("acme.com"), "apex of wildcard should be in"
     assert s.in_scope_host("acme.io"), "bare apex should be in"
+    assert s.in_scope_host("sub.acme.io"), "subdomain of bare apex should be in"
     assert s.in_scope_host("203.0.113.9"), "ip within CIDR should be in"
     assert not s.in_scope_host("blog.acme.com"), "deny must win over allow"
     assert not s.in_scope_host("acme.org"), "unlisted host is default-deny"
@@ -123,6 +140,9 @@ def _selftest():
     # URL forms with scheme/port/path resolve to the bare host.
     assert s.in_scope_host("https://app.acme.com:443/login")
     assert _host_of("https://APP.acme.com:8080/x") == "app.acme.com"
+    # userinfo trick: the real host is what counts, not the userinfo label.
+    assert not s.in_scope_host("http://app.acme.com@evil.com/")
+    assert s.in_scope_host("http://evil.com@app.acme.com/")
     assert s.filter_hosts(["app.acme.com", "evil.com", "acme.io", "acme.io"]) == \
         ["acme.io", "app.acme.com"]
     print("scope.py self-test: PASS")

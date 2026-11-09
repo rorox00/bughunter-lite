@@ -45,9 +45,11 @@ else
 fi
 
 # 2 live hosts + fingerprint ---------------------------------------------
+# Build the candidate list on disk first: a pipe into httpx can SIGPIPE under
+# set -o pipefail, whereas feeding a file with -list is deterministic.
+{ cat "$OUT/subs.txt" 2>/dev/null || true; echo "$DOMAIN"; } | sort -u > "$OUT/candidates.txt"
 if have httpx; then
-  { cat "$OUT/subs.txt"; echo "$DOMAIN"; } | sort -u | \
-    httpx -silent -json -sc -title -td -ip -cdn -rl 50 -H "User-Agent: $UA" -o "$OUT/live.jsonl" || true
+  httpx -list "$OUT/candidates.txt" -silent -json -sc -title -td -ip -cdn -rl 50 -H "User-Agent: $UA" -o "$OUT/live.jsonl" || true
   if have jq; then
     jq -r '.url' "$OUT/live.jsonl" 2>/dev/null | sort -u > "$OUT/live.txt" || true
   else
@@ -56,7 +58,7 @@ if have httpx; then
   fi
 else
   echo "[skip] httpx not found"; touch "$OUT/live.jsonl"
-  { cat "$OUT/subs.txt"; echo "$DOMAIN"; } | sort -u > "$OUT/live.txt" || true
+  cp "$OUT/candidates.txt" "$OUT/live.txt"
 fi
 
 # 3 URL collection (merge all into urls.txt) ------------------------------
@@ -89,8 +91,12 @@ else
   echo "[skip] katana not found"
 fi
 
-# optional static-noise trim (KEEP .js):
-#   grep -viE '\.(png|jpe?g|gif|svg|woff2?|ttf|ico|css)(\?|$)' "$OUT/urls.txt" | sponge "$OUT/urls.txt"
+# static-noise trim (KEEP .js) — drop binary/font/media/style noise early so
+# gf, unfurl and the JS hand-off below work on a cleaner URL set.
+if [ -s "$OUT/urls.txt" ]; then
+  grep -viE '\.(png|jpe?g|gif|svg|woff2?|ttf|ico|css|mp4|webm|avi|webp)(\?|$)' "$OUT/urls.txt" > "$OUT/urls.clean" || true
+  mv "$OUT/urls.clean" "$OUT/urls.txt"
+fi
 
 # 4 gf "statistically vulnerable" sorting ---------------------------------
 if have gf; then

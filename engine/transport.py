@@ -4,8 +4,8 @@
 Every HTTP request passes through ScopedSession, which enforces the scope
 allowlist and a read-only method guard IN CODE before any byte goes on the
 wire, and re-checks scope on every redirect hop so a redirect can never carry
-the client off-scope. Uses requests if available, else urllib with
-auto-redirect disabled.
+the client off-scope. Uses a persistent requests.Session (connection pooling +
+bounded streaming reads) if available, else urllib with auto-redirect disabled.
 """
 
 import os
@@ -29,7 +29,8 @@ except ImportError:
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 MAX_REDIRECTS = 8
-UA = "bughunter-lite/0.1 (+operator-in-the-loop)"
+MAX_BODY = 500000
+UA = "bughunter-lite/0.2 (+operator-in-the-loop)"
 
 
 def _host(url):
@@ -75,6 +76,9 @@ class ScopedSession:
                 no_proxy.add(part)
         self._no_proxy = no_proxy
 
+        # Persistent connection pool (reuses TCP/TLS across requests).
+        self._session = requests.Session() if requests is not None else None
+
     # --- gates ---------------------------------------------------------
 
     def _proxy_for(self, url):
@@ -115,18 +119,33 @@ class ScopedSession:
     # --- raw I/O -------------------------------------------------------
 
     def _raw(self, method, url, headers, body):
-        """Perform ONE request with no auto-redirect; return a raw-result dict."""
+        """Perform ONE request with no auto-redirect; return a raw-result dict.
+
+        Reads at most MAX_BODY bytes from the socket so a huge response cannot
+        exhaust memory. A network error is returned as status 0 rather than
+        raised, so the caller can record it like any other transaction.
+        """
         start = time.time()
-        if requests is not None:
-            resp = requests.request(
-                method, url, headers=headers, data=body,
-                proxies=self._proxy_for(url), verify=self.verify,
-                allow_redirects=False, timeout=self.timeout,
-            )
-            elapsed = int((time.time() - start) * 1000)
-            rh = {k.lower(): v for k, v in resp.headers.items()}
-            return {"status": resp.status_code, "headers": rh,
-                    "body": resp.text[:500000], "elapsed_ms": elapsed}
+
+        # requests path: streamed, bounded read, pooled connection.
+        if self._session is not None:
+            try:
+                resp = self._session.request(
+                    method, url, headers=headers, data=body,
+                    proxies=self._proxy_for(url), verify=self.verify,
+                    allow_redirects=False, timeout=self.timeout, stream=True,
+                )
+                elapsed = int((time.time() - start) * 1000)
+                rh = {k.lower(): v for k, v in resp.headers.items()}
+                chunk = resp.raw.read(MAX_BODY, decode_content=True)
+                status = resp.status_code
+                resp.close()
+                text = chunk.decode("utf-8", "replace") if isinstance(chunk, bytes) else (chunk or "")
+                return {"status": status, "headers": rh,
+                        "body": text, "elapsed_ms": elapsed}
+            except Exception as e:  # noqa: BLE001 - surface network errors as status 0
+                return {"status": 0, "headers": {}, "body": str(e),
+                        "elapsed_ms": int((time.time() - start) * 1000)}
 
         # urllib fallback.
         proxies = self._proxy_for(url)
@@ -142,18 +161,20 @@ class ScopedSession:
         data = body.encode("utf-8") if isinstance(body, str) else body
         req = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
         try:
-            resp = opener.open(req, timeout=self.timeout)
-            status = resp.getcode()
-            raw = resp.read(500000)
-            rh = {k.lower(): v for k, v in resp.headers.items()}
+            with opener.open(req, timeout=self.timeout) as resp:
+                status = resp.getcode()
+                raw = resp.read(MAX_BODY)
+                rh = {k.lower(): v for k, v in resp.headers.items()}
         except urllib.error.HTTPError as e:
             status = e.code
-            raw = e.read(500000) if hasattr(e, "read") else b""
+            raw = e.read(MAX_BODY) if hasattr(e, "read") else b""
             rh = {k.lower(): v for k, v in (e.headers or {}).items()}
+        except Exception as e:  # noqa: BLE001 - surface network errors as status 0
+            return {"status": 0, "headers": {}, "body": str(e),
+                    "elapsed_ms": int((time.time() - start) * 1000)}
         elapsed = int((time.time() - start) * 1000)
         text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else (raw or "")
-        return {"status": status, "headers": rh,
-                "body": text[:500000], "elapsed_ms": elapsed}
+        return {"status": status, "headers": rh, "body": text, "elapsed_ms": elapsed}
 
     # --- public API ----------------------------------------------------
 

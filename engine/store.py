@@ -44,7 +44,11 @@ class TxnStore:
         parent = os.path.dirname(path)
         if parent:
             os.makedirs(parent, exist_ok=True)
-        self.conn = sqlite3.connect(path)
+        # check_same_thread=False lets worker threads share one connection;
+        # a busy timeout plus WAL avoids "database is locked" under contention.
+        self.conn = sqlite3.connect(path, check_same_thread=False, timeout=30.0)
+        self.conn.execute("PRAGMA journal_mode=WAL;")
+        self.conn.execute("PRAGMA synchronous=NORMAL;")
         self.conn.executescript(SCHEMA)
         self.conn.commit()
 
