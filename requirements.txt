@@ -1,0 +1,17 @@
+# bughunter-lite requirements
+#
+# The engine is Python 3 standard library ONLY — there is nothing mandatory to
+# install here. This file documents the single OPTIONAL dependency.
+#
+# requests is optional: engine/transport.py and engine/recon.py use it for
+# connection pooling and convenience when present, and fall back to urllib
+# (stdlib) when it is not. Install it only if you want the pooled HTTP path.
+#
+# requests>=2.31
+#
+# External CLI tools used by the bash pipeline (recon.sh/jsdiscover.sh/
+# jsanalyze.sh) and the tool bridge are installed separately, not via pip:
+#   subfinder httpx gau waymore katana anew unfurl gf subjs getJS jsluice
+#   xnLinkFinder trufflehog retire webcrack sourcemapper jq ffuf nuclei
+#   interactsh-client
+# Each stage skips gracefully if its tool is absent.

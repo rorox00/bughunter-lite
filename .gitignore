@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# Local config / secrets — never commit
+.env
+config.env
+engine/burp-mcp.json
+
+# Skill install backups
+.skill-backups/
+
+# Engagement output (whether under $HOME or a repo-local base dir)
+.bughunter-engagements/
+**/.bughunter-engagements/
+
+# Recon / JS analysis dumps and detected secrets
+secrets.txt
+**/secrets.txt
+**/js/
+**/maps/
