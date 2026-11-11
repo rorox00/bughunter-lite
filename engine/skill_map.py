@@ -11,17 +11,52 @@ import re
 
 # Vuln class -> priority weight (higher first).
 CLASS_WEIGHT = {
-    "rce": 100, "sqli": 90, "ssti": 88, "ssrf": 85, "auth-bypass": 85,
-    "idor": 80, "lfi": 78, "xxe": 75, "forgot-password": 75, "cache-poison": 72,
+    "rce": 100, "sqli": 90, "nosqli": 88, "ssti": 88, "ssrf": 85,
+    "auth-bypass": 85, "deserialization": 85, "jwt": 82, "request-smuggling": 82,
+    "idor": 80, "privesc": 80, "lfi": 78, "saml": 78, "xxe": 75,
+    "forgot-password": 75, "password-reset": 75, "cache-poison": 72,
     "file-upload": 68, "graphql": 65, "oauth": 62, "business-logic": 58,
-    "race-condition": 58, "xss": 55, "cors": 45, "open-redirect": 40,
-    "secret": 35, "info-leak": 30,
+    "race-condition": 58, "prototype-pollution": 58, "header-injection": 55,
+    "xss": 55, "csrf": 50, "cors": 45, "open-redirect": 40, "secret": 35,
+    "info-leak": 30,
 }
 
-# Vuln class -> hunt skill(s). Secret/info-leak share hunt-source-leak.
-CLASS_SKILL = {cls: ["hunt-%s" % cls] for cls in CLASS_WEIGHT}
-CLASS_SKILL["secret"] = ["hunt-source-leak"]
-CLASS_SKILL["info-leak"] = ["hunt-source-leak"]
+# Vuln class -> the installed hunt skill(s) that cover it. Split classes point at
+# every real skill; secret/info-leak share hunt-source-leak. Context/header-only
+# classes (jwt, csrf, request-smuggling, deserialization) are listed so they
+# resolve (not "missing") and load via the orchestrator, even without a recon signal.
+CLASS_SKILL = {
+    "idor": ["hunt-idor"],
+    "ssrf": ["hunt-ssrf-identification", "hunt-ssrf-postex"],
+    "sqli": ["hunt-sqli"],
+    "xss": ["hunt-xss-reflected", "hunt-xss-stored", "hunt-xss-dom", "hunt-xss-blind"],
+    "ssti": ["hunt-ssti"],
+    "xxe": ["hunt-xxe"],
+    "lfi": ["hunt-lfi"],
+    "rce": ["hunt-rce"],
+    "file-upload": ["hunt-file-upload"],
+    "auth-bypass": ["hunt-auth-bypass"],
+    "oauth": ["hunt-oauth"],
+    "graphql": ["hunt-graphql"],
+    "business-logic": ["hunt-business-logic"],
+    "race-condition": ["hunt-race-condition"],
+    "cors": ["hunt-cors"],
+    "open-redirect": ["hunt-open-redirect"],
+    "cache-poison": ["hunt-cache-poison"],
+    "secret": ["hunt-source-leak"],
+    "info-leak": ["hunt-source-leak"],
+    # New classes we added skills for:
+    "csrf": ["hunt-csrf"],
+    "nosqli": ["hunt-nosqli"],
+    "header-injection": ["hunt-header-injection"],
+    "password-reset": ["hunt-password-reset"],
+    "privesc": ["hunt-privesc"],
+    "jwt": ["hunt-jwt"],
+    "saml": ["hunt-saml"],
+    "prototype-pollution": ["hunt-prototype-pollution"],
+    "request-smuggling": ["hunt-request-smuggling"],
+    "deserialization": ["hunt-deserialization"],
+}
 
 # Parameter-name signals.
 PARAM_SIGNALS = {
@@ -30,6 +65,9 @@ PARAM_SIGNALS = {
     "idor": re.compile(r"(^id$|_id$|^uid$|uuid|guid|account|order|invoice|number)", re.I),
     "open-redirect": re.compile(r"(redirect|return_url|returnurl|next|dest|goto|continue|url)", re.I),
     "lfi": re.compile(r"(file|path|filename|template|doc|document|page|folder|download|include|read)", re.I),
+    "nosqli": re.compile(r"(^id$|_id$|^q$|search|filter|login|email|user|password|passwd|pwd)", re.I),
+    "header-injection": re.compile(r"(redirect|url|next|return|host|callback)", re.I),
+    "prototype-pollution": re.compile(r"(__proto__|constructor|prototype|\[\$)", re.I),
 }
 
 # URL-path signals.
@@ -40,6 +78,9 @@ PATH_SIGNALS = {
     "auth-bypass": re.compile(r"/(admin|internal|debug|actuator|console|manage)", re.I),
     "lfi": re.compile(r"/(download|attachment|export|fetch|backup)(/|$|\?)", re.I),
     "secret": re.compile(r"\.(env|git|map|bak|old|json)$", re.I),
+    "password-reset": re.compile(r"(forgot|reset|recover).*(pass|pwd|token)", re.I),
+    "privesc": re.compile(r"/(admin|manage|internal|console)", re.I),
+    "saml": re.compile(r"/(saml|sso|acs|callback)", re.I),
 }
 
 UA = "bughunter-lite/0.2"
@@ -162,9 +203,9 @@ if __name__ == "__main__":
     }]
     cands = classify(demo)
 
-    print("%-3s %-13s %-28s %s" % ("wt", "class", "where", "skill(s)"))
+    print("%-3s %-19s %-28s %s" % ("wt", "class", "where", "skill(s)"))
     for c in cands:
-        print("%-3d %-13s %-28s %s" % (
+        print("%-3d %-19s %-28s %s" % (
             c["weight"], c["class"], c["where"], ", ".join(c["skills"])))
 
     classes = {c["class"] for c in cands}
@@ -178,5 +219,8 @@ if __name__ == "__main__":
     # The secret candidate never exercises credentials.
     sec = next(c for c in cands if c["class"] == "secret")
     assert "do NOT exercise" in sec["curl"]
+    # Every emitted candidate resolves to real, installed skills (none "missing").
+    for c in cands:
+        assert all("missing:" not in s for s in c["skills"]), (c["class"], c["skills"])
 
     print("skill_map.py self-test: PASS")
