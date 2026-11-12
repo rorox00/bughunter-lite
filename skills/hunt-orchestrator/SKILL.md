@@ -83,6 +83,7 @@ See `references/good-output.md` for the bar. A phase is done only when:
 - Every step is a checked checkbox.
 - Every tool call left a non-zero-byte log / evidence file.
 - Each finding has a reproducible request and observed evidence.
+- Maintain a live `checklist.md` in the engagement dir: one line per class with `[x]`/`[~]`/`[ ]` and its result (CONFIRMED N / killed / in progress / pending), updated as you run each skill, so the operator can see which skill ran on the target and why.
 
 ## STEP 6 — Review handoff
 
