@@ -7,6 +7,9 @@ arsenal and stops). --hunt adds the operator-in-the-loop phases: hunt ->
 validate -> report, each governed by rules of engagement that are ALSO enforced
 in code (scope gate, read-only methods, never exercise credentials). Mock mode
 runs the whole flow offline with no network and no LLM calls.
+
+A live methodology checklist (checklist.md) is regenerated as each class is
+hunted, so the operator can watch which skill ran and its result in real time.
 """
 
 import argparse
@@ -14,6 +17,7 @@ import json
 import os
 import re
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import scope as scope_mod      # noqa: E402
@@ -26,6 +30,8 @@ ALL_PHASES = ["recon", "rank", "map", "hunt", "validate", "report"]
 DEFAULT_PHASES = ["recon", "rank", "map"]
 
 _URL_RE = re.compile(r"https?://[^\s'\"<>)\]]+")
+_SEV_ORDER = ["Critical", "High", "Medium", "Low", "Info"]
+_SEV_RANK = {"critical": 5, "high": 4, "medium": 3, "low": 2, "info": 1}
 
 
 class Engine:
@@ -39,6 +45,7 @@ class Engine:
         self.allow_intrusive = allow_intrusive
         self.model = model
         self.candidates = []
+        self._current_class = None
         self.log = self.eng.log
 
     # --- phases --------------------------------------------------------
@@ -84,6 +91,7 @@ class Engine:
         skill_map.write_arsenal(self.candidates, self.eng.arsenal_path)
         self.log("map: arsenal -> %s" % self.eng.arsenal_path)
         self.log("DEFAULT run ends here. Pass --hunt to attempt operator-in-the-loop validation.")
+        self._write_checklist()
 
     def hunt(self):
         """Attempt to confirm each candidate via the LLM seam (or a mock)."""
@@ -93,6 +101,11 @@ class Engine:
         batch = self.candidates[:self.max_hunts]
         for i, c in enumerate(batch, 1):
             task = self._task(roe, c)
+
+            # Mark this class in-progress BEFORE the dispatch.
+            self._current_class = c["class"]
+            self._write_checklist()
+
             if self.mock:
                 finding = {
                     "class": c["class"], "host": c["host"], "confirmed": False,
@@ -119,6 +132,11 @@ class Engine:
             findings.append(finding)
             self.eng.state["findings"] = findings
             self.eng.save()
+
+            # Mark this class done (with its result) AFTER saving, then clear.
+            self._write_checklist()
+            self._current_class = None
+
             self.log("hunt %d/%d: %s %s confirmed=%s%s" % (
                 i, len(batch), c["class"], c["where"], finding.get("confirmed"),
                 " SCOPE-VIOLATION" if finding["_scope_violations"] else ""))
@@ -131,6 +149,7 @@ class Engine:
         self.eng.state["validated"] = validated
         self.eng.save()
         self.log("validate: %d confirmed, in-scope finding(s)" % len(validated))
+        self._write_checklist()
 
     def report(self):
         """Write report.md from the validated findings."""
@@ -209,6 +228,79 @@ class Engine:
                 if h and h not in bad:
                     bad.append(h)
         return bad
+
+    def _write_checklist(self):
+        """Regenerate checklist.md from current state (live methodology view)."""
+        state = self.eng.state
+        phase = state.get("phase")
+        targets = state.get("targets", []) or []
+        candidates = state.get("candidates", []) or []
+        findings = state.get("findings", []) or []
+
+        confirmed = [f for f in findings if f.get("confirmed")]
+
+        # --- header ---
+        lines = [
+            "# Methodology — %s" % self.scope.name,
+            "",
+            "_Updated %s · phase: %s · %d confirmed_" % (
+                time.strftime("%H:%M:%S", time.localtime()), phase, len(confirmed)),
+            "",
+        ]
+
+        # --- recon ---
+        ne = sum(len(t.get("endpoints", []) or []) for t in targets)
+        np = sum(len(t.get("params", []) or []) for t in targets)
+        ns = sum(len(t.get("secrets", []) or []) for t in targets)
+        lines.append("## Recon")
+        if targets:
+            lines.append("- [x] recon + map — %d endpoints, %d params, %d secrets" % (ne, np, ns))
+        else:
+            lines.append("- [ ] recon + map — pending")
+        lines.append("")
+
+        # --- hunt (impact-ranked, one line per unique class) ---
+        lines.append("## Hunt (impact-ranked)")
+        by_class = {}
+        for c in candidates:
+            cls = c.get("class")
+            w = c.get("weight", 0)
+            if cls not in by_class or w > by_class[cls]["weight"]:
+                by_class[cls] = {"weight": w, "skills": c.get("skills", [])}
+        for cls, info in sorted(by_class.items(), key=lambda kv: -kv[1]["weight"]):
+            skills = ", ".join(info["skills"])
+            cls_findings = [f for f in findings if f.get("class") == cls]
+            cls_confirmed = [f for f in cls_findings if f.get("confirmed")]
+            if cls_findings:
+                if cls_confirmed:
+                    highest = max(cls_confirmed,
+                                  key=lambda f: _SEV_RANK.get((f.get("severity") or "info").lower(), 0))
+                    sev = (highest.get("severity") or "info").title()
+                    lines.append("- [x] hunt-%s (%s) → %d CONFIRMED (%s)" % (
+                        cls, skills, len(cls_confirmed), sev))
+                else:
+                    lines.append("- [x] hunt-%s (%s) → killed" % (cls, skills))
+            elif self._current_class == cls:
+                lines.append("- [~] hunt-%s (%s) → in progress" % (cls, skills))
+            else:
+                lines.append("- [ ] hunt-%s (%s) → pending" % (cls, skills))
+        lines.append("")
+
+        # --- findings summary ---
+        counts = {}
+        for f in confirmed:
+            s = (f.get("severity") or "info").title()
+            counts[s] = counts.get(s, 0) + 1
+        breakdown = ", ".join("%d %s" % (counts[s], s) for s in _SEV_ORDER if counts.get(s))
+        if confirmed:
+            lines.append("## Findings: %d confirmed (%s)" % (len(confirmed), breakdown))
+        else:
+            lines.append("## Findings: 0 confirmed")
+
+        path = os.path.join(self.eng.dir, "checklist.md")
+        with open(path, "w", encoding="utf-8") as fp:
+            fp.write("\n".join(lines) + "\n")
+        return path
 
     # --- driver --------------------------------------------------------
 
