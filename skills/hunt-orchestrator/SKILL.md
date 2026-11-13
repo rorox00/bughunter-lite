@@ -61,6 +61,15 @@ That writes `arsenal.md` (ranked candidates). Route each class to its skill:
 
 Take the highest-weight candidate first.
 
+## STEP 2.5 — Auth setup (ONLY if provided; else black-box)
+- No credentials given AND self-registration NOT authorized → BLACK-BOX: skip this step, hunt the
+  unauthenticated surface only. Do NOT register or log in.
+- Credentials for roles provided → set each as a session (`state.set_session`: admin/user/guest); plan
+  access-control tests across them.
+- Self-registration authorized → register ONE test account via the signup flow, log in, capture the
+  session, use it for authenticated hunting.
+- Then hunt. For multi-role, compare roles with `replay.cross_session` / `replay.authz_signal`.
+
 ## STEP 3 — Session discipline
 
 - **One class at a time.** Finish a class before starting another.
