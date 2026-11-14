@@ -64,7 +64,7 @@ else
   echo "[skip] getJS not found"
 fi
 if have katana; then
-  katana -list "$LIVE" -headless -jc -silent 2>/dev/null | grep -iE '\.js(\?|$)' | append_to "$JSFILES" || true
+  katana -list "$LIVE" -headless -jc -rlm 80 -silent ${BH_PROXY:+-proxy "$BH_PROXY"} 2>/dev/null | grep -iE '\.js(\?|$)' | append_to "$JSFILES" || true
 else
   echo "[skip] katana not found"
 fi
@@ -75,9 +75,10 @@ if have curl; then
   while read -r purl; do
     [ -z "$purl" ] && continue
     n=$((n + 1))
-    curl -s -k -A "$UA" -m 20 "$purl" 2>/dev/null \
+    curl -s -k -A "$UA" -m 20 ${BH_PROXY:+-x "$BH_PROXY"} "$purl" 2>/dev/null \
       | grep -oE '<script[^>]*>.*</script>' > "$OUT/js/inline_$n.js" 2>/dev/null || true
     [ -s "$OUT/js/inline_$n.js" ] || rm -f "$OUT/js/inline_$n.js"
+    sleep 0.8  # compliance: ~75 req/min ceiling for target fetches
   done < "$LIVE"
 else
   echo "[skip] curl not found — no inline extraction"
@@ -88,10 +89,11 @@ if have curl; then
   while read -r url; do
     [ -z "$url" ] && continue
     tmp="$(mktemp)"
-    curl -s -k -A "$UA" -m 20 "$url" -o "$tmp" || true
+    sleep 0.8  # compliance: ~75 req/min ceiling for target fetches
+    curl -s -k -A "$UA" -m 20 ${BH_PROXY:+-x "$BH_PROXY"} "$url" -o "$tmp" || true
     if [ ! -s "$tmp" ] || grep -qiE 'captcha|just a moment|cf-browser-verification' "$tmp"; then
       if have katana; then
-        katana -u "$url" -headless -silent 2>/dev/null > "$tmp" || echo "$url" >> "$OUT/blocked.txt"
+        katana -u "$url" -headless -rlm 80 -silent ${BH_PROXY:+-proxy "$BH_PROXY"} 2>/dev/null > "$tmp" || echo "$url" >> "$OUT/blocked.txt"
       else
         echo "$url" >> "$OUT/blocked.txt"
       fi
@@ -103,7 +105,7 @@ if have curl; then
     echo "$sha1 $url" >> "$OUT/urlmap.txt"
     # sourcemaps: inline pointer + guessed .map
     grep -oE 'sourceMappingURL=[^ ]+' "$OUT/js/$sha1.js" >> "$OUT/maps/pointers.txt" 2>/dev/null || true
-    curl -s -k -A "$UA" -m 20 "${url}.map" -o "$OUT/maps/$sha1.js.map" 2>/dev/null || true
+    curl -s -k -A "$UA" -m 20 ${BH_PROXY:+-x "$BH_PROXY"} "${url}.map" -o "$OUT/maps/$sha1.js.map" 2>/dev/null || true
     [ -s "$OUT/maps/$sha1.js.map" ] || rm -f "$OUT/maps/$sha1.js.map"
   done < "$JSFILES"
 else

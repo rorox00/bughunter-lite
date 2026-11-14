@@ -49,7 +49,9 @@ fi
 # set -o pipefail, whereas feeding a file with -list is deterministic.
 { cat "$OUT/subs.txt" 2>/dev/null || true; echo "$DOMAIN"; } | sort -u > "$OUT/candidates.txt"
 if have httpx; then
-  httpx -list "$OUT/candidates.txt" -silent -json -sc -title -td -ip -cdn -rl 50 -H "User-Agent: $UA" -o "$OUT/live.jsonl" || true
+  # Compliance: -rlm 80 caps requests/MINUTE; route target traffic via Burp.
+  httpx -list "$OUT/candidates.txt" -silent -json -sc -title -td -ip -cdn -rlm 80 \
+    ${BH_PROXY:+-proxy "$BH_PROXY"} -H "User-Agent: $UA" -o "$OUT/live.jsonl" || true
   if have jq; then
     jq -r '.url' "$OUT/live.jsonl" 2>/dev/null | sort -u > "$OUT/live.txt" || true
   else
@@ -85,7 +87,9 @@ else
 fi
 
 if have katana; then
-  katana -list "$OUT/live.txt" -jc -kf all -d 3 -c 10 -silent -H "User-Agent: $UA" \
+  # Compliance: -rlm 80 caps requests/MINUTE; route target traffic via Burp.
+  katana -list "$OUT/live.txt" -jc -kf all -d 3 -c 5 -rlm 80 -silent \
+    ${BH_PROXY:+-proxy "$BH_PROXY"} -H "User-Agent: $UA" \
     | append_to "$OUT/urls.txt" || true
 else
   echo "[skip] katana not found"

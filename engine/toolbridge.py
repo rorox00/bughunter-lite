@@ -46,9 +46,13 @@ def ffuf(url, wordlist, scope=None, extra=None, timeout=300, filter_mode="auto")
 
     fd, tmp = tempfile.mkstemp(suffix=".json", prefix="ffuf_")
     os.close(fd)
+    # Compliance: -rate 1 req/s (~60/min, under the 100/min cap); low threads.
     cmd = ["ffuf", "-u", url, "-w", wordlist,
            "-mc", "200,201,204,301,302,307,401,403,405,500",
-           "-ac", "-t", "50", "-rate", "50", "-o", tmp, "-of", "json", "-s"]
+           "-ac", "-t", "2", "-rate", "1", "-o", tmp, "-of", "json", "-s"]
+    proxy = os.environ.get("BH_PROXY") or os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+    if proxy:
+        cmd += ["-x", proxy]
     if extra:
         cmd += list(extra)
     try:
@@ -91,7 +95,11 @@ def nuclei(url, scope=None, templates=None,
     if not have("nuclei"):
         return {"tool": "nuclei", "error": "nuclei not installed", "results": []}
 
-    cmd = ["nuclei", "-u", url, "-jsonl", "-silent", "-severity", severity]
+    # Compliance: -rlm caps requests per MINUTE (under the 100/min cap).
+    cmd = ["nuclei", "-u", url, "-jsonl", "-silent", "-severity", severity, "-rlm", "80", "-c", "5"]
+    proxy = os.environ.get("BH_PROXY") or os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+    if proxy:
+        cmd += ["-proxy", proxy]
     if templates:
         cmd += ["-t", templates]
     try:
