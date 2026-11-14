@@ -5,7 +5,8 @@
 # Usage: recon.sh <domain> <outdir>
 set -euo pipefail
 
-UA="bughunter-lite/0.2 (+authorized-testing)"
+UA="${BH_UA:-bughunter-lite/0.2 (+authorized-testing)}"
+case "$UA" in *"YWH- tester"*) ;; *) UA="$UA YWH- tester " ;; esac
 
 if [ "$#" -ne 2 ]; then
   echo "usage: $0 <domain> <outdir>" >&2

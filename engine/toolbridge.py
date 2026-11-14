@@ -16,6 +16,14 @@ import urllib.parse
 from collections import Counter
 
 
+def _ua():
+    """UA with the mandatory program tag appended (idempotent)."""
+    ua = os.environ.get("BH_UA") or "bughunter-lite/0.2 (+authorized-testing)"
+    if "YWH- tester" not in ua:
+        ua = ua + " YWH- tester "
+    return ua
+
+
 def have(tool):
     """True if `tool` is on PATH."""
     return shutil.which(tool) is not None
@@ -53,6 +61,7 @@ def ffuf(url, wordlist, scope=None, extra=None, timeout=300, filter_mode="auto")
     proxy = os.environ.get("BH_PROXY") or os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
     if proxy:
         cmd += ["-x", proxy]
+    cmd += ["-H", "User-Agent: " + _ua()]
     if extra:
         cmd += list(extra)
     try:
@@ -100,6 +109,7 @@ def nuclei(url, scope=None, templates=None,
     proxy = os.environ.get("BH_PROXY") or os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
     if proxy:
         cmd += ["-proxy", proxy]
+    cmd += ["-H", "User-Agent: " + _ua()]
     if templates:
         cmd += ["-t", templates]
     try:

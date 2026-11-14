@@ -199,12 +199,20 @@ class ScopedSession:
         """Issue a scoped request, following in-scope redirects only."""
         method = method.upper()
         hdrs = dict(headers or {})
-        hdrs.setdefault("User-Agent", UA)
+        hdrs.setdefault("User-Agent", os.environ.get("BH_UA") or UA)
         if session:
             for k, v in (session.get("headers") or {}).items():
                 hdrs[k] = v
             if session.get("cookies"):
                 hdrs["Cookie"] = session["cookies"]
+
+        # MANDATORY program tag: every request's User-Agent MUST contain
+        # "YWH- tester" or the WAF blocks us. Enforced here, last, after any
+        # session-supplied headers. Idempotent: appended only if missing.
+        _ua = hdrs.get("User-Agent") or (os.environ.get("BH_UA") or UA)
+        if "YWH- tester" not in _ua:
+            _ua = _ua + " YWH- tester "
+        hdrs["User-Agent"] = _ua
 
         try:
             self._assert_method(method)

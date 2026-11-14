@@ -7,7 +7,8 @@
 # Usage: jsdiscover.sh <jsfiles.txt> <live.txt> <outdir>
 set -euo pipefail
 
-UA="bughunter-lite/0.2 (+authorized-testing)"
+UA="${BH_UA:-bughunter-lite/0.2 (+authorized-testing)}"
+case "$UA" in *"YWH- tester"*) ;; *) UA="$UA YWH- tester " ;; esac
 
 if [ "$#" -ne 3 ]; then
   echo "usage: $0 <jsfiles.txt> <live.txt> <outdir>" >&2
