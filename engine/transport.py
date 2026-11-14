@@ -64,6 +64,16 @@ class ScopedSession:
             verify = os.environ.get("BH_PROXY_INSECURE") != "1"
         self.verify = verify
 
+        # Global request throttle (compliance): BH_RATE_MIN caps requests per
+        # MINUTE across this session. 0/unset = no throttle. Enforced in _raw,
+        # the single choke point every request passes through.
+        try:
+            self._rate_min = int(os.environ.get("BH_RATE_MIN", "0") or "0")
+        except ValueError:
+            self._rate_min = 0
+        self._min_interval = (60.0 / self._rate_min) if self._rate_min > 0 else 0.0
+        self._last_req = 0.0
+
         self.proxy = (os.environ.get("BH_PROXY")
                       or os.environ.get("HTTPS_PROXY")
                       or os.environ.get("HTTP_PROXY"))
@@ -125,6 +135,13 @@ class ScopedSession:
         exhaust memory. A network error is returned as status 0 rather than
         raised, so the caller can record it like any other transaction.
         """
+        # Compliance throttle: sleep so sends never exceed BH_RATE_MIN/min.
+        if self._min_interval:
+            wait = self._min_interval - (time.time() - self._last_req)
+            if wait > 0:
+                time.sleep(wait)
+            self._last_req = time.time()
+
         start = time.time()
 
         # requests path: streamed, bounded read, pooled connection.
